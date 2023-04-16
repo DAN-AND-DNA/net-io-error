@@ -1,0 +1,123 @@
+type ErrorType int
+type ErrorBool int
+
+const (
+	ErrNil ErrorType = iota
+	ErrOther
+	ErrNet
+	ErrNetOp
+	ErrAddr
+	ErrDNSConfig
+	ErrDNS
+	ErrInvalidAddr
+	ErrUnknown
+	ErrSyscall
+
+	ErrEOF
+	ErrClosedPipe
+)
+
+const (
+	Unknown ErrorBool = -1
+	False             = 1
+	True              = 0
+)
+
+type NetIOError struct {
+	Type                ErrorType
+	NetError            net.Error
+	OpError             *net.OpError
+	DNSError            *net.DNSError
+	AddrError           *net.AddrError
+	InvalidAddrError    *net.InvalidAddrError
+	UnknownNetworkError *net.UnknownNetworkError
+	Errno               syscall.Errno
+	IOError             error
+	OtherError          error
+}
+
+func (netIOErr *NetIOError) Temporary() ErrorBool {
+	if netIOErr == nil {
+		return Unknown
+	}
+
+	if netIOErr.Type == ErrNet {
+		return Unknown
+	}
+
+	if netIOErr.Type == ErrNetOp {
+		if netIOErr.OpError.Temporary() {
+			return True
+		} else {
+			return False
+		}
+	}
+
+	if netIOErr.Type == ErrSyscall {
+		if netIOErr.Errno.Temporary() {
+			return True
+		} else {
+			return False
+		}
+	}
+	// TODO
+	return Unknown
+}
+
+func NewNetIOError(err error) *NetIOError {
+	ret := &NetIOError{}
+	ret.Type = ErrNil
+	ret.OtherError = err
+
+	if err == nil {
+		return ret
+	}
+
+	if errors.Is(err, io.EOF) {
+		ret.Type = ErrEOF
+		ret.IOError = err
+	} else if errors.Is(err, io.ErrClosedPipe) {
+		ret.Type = ErrClosedPipe
+		ret.IOError = err
+	} else if errors.Is(err, io.ErrUnexpectedEOF) {
+		// TODO
+		ret.IOError = err
+	} else if errors.Is(err, io.ErrNoProgress) {
+		ret.IOError = err
+	} else if errors.Is(err, io.ErrShortBuffer) {
+		ret.IOError = err
+	} else if errors.Is(err, io.ErrShortWrite) {
+		ret.IOError = err
+	}
+
+	ret.Type = ErrOther
+	netError, ok := err.(net.Error)
+	if !ok {
+		return ret
+	}
+
+	ret.Type = ErrNet
+	opError, ok := netError.(*net.OpError)
+	if !ok {
+		return ret
+	}
+
+	ret.Type = ErrNetOp
+	switch t := opError.Err.(type) {
+	case *net.DNSError:
+		ret.Type = ErrDNS
+		ret.DNSError = t
+	case *net.InvalidAddrError:
+		ret.Type = ErrInvalidAddr
+		ret.InvalidAddrError = t
+	case *os.SyscallError:
+		ret.Type = ErrSyscall
+		ret.Errno = t.Err.(syscall.Errno)
+		// TODO
+	default:
+		return ret
+	}
+
+	return ret
+}
+
